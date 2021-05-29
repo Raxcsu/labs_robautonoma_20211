@@ -7,6 +7,7 @@ import numpy as np
 from sensor_msgs.msg import LaserScan
 from autlab3.msg import ArrayXY
 from nav_msgs.msg import Odometry
+from geometry_msgs.msg import Twist
 import tf
 
 
@@ -35,14 +36,70 @@ def Tlidar_wrt_base():
     # sistema de base del robot.
     return T
 
+class Lidar(object):
+    def __init__(self):
+        # Crear el suscriptor al tópico del LiDAR
+        topic = '/scan'
+        self.pub = rospy.Subscriber(topic, LaserScan, self.callback)
+        self.datos = LaserScan()
+        # Esperar 1 segundo
+        rospy.sleep(1)
+        
+        # Almacenar los rangos máximo y mínimo que puede leer el LiDAR
+        self.range_max = self.datos.range_max
+        self.range_min = self.datos.range_min
+        
+    def callback(self, msg):
+        # Callback para el suscriptor
+        self.datos = msg
+        
+    def get_xy(self):
+        """ Retorna los valores x,y de la medición, en el sistema del LiDAR
+        """
+        # Obtener los rangos medidos
+        data = self.datos.ranges
 
+        # Rango de valores de los ángulos, angle_min a angle_max, 
+        # distancia entre cada punto proporcional a la cantidad de datos
+        angle_min = self.datos.angle_min
+        angle_max = self.datos.angle_max
+        angles = np.linspace(angle_min, angle_max, len(data))
 
+        x = []
+        y = []
+        data_filtered = []
+
+        # Filtrar los rangos que no son válidos: mantener solo los rangos
+        # válidos y sus correspondientes ángulos
+        
+        for i in range(0, len(data)):
+            if data[i] < self.range_max or data[i] > self.range_min:
+                data_filtered.append(data[i])
+
+        angles = np.linspace(angle_min, angle_max, len(data_filtered))
+        # Convertir los rangos válidos en x, y
+       
+        for i in range(0, len(data_filtered)): 
+            x.append(data_filtered[i]*np.cos(angles[i])) 
+            y.append(data_filtered[i]*np.sin(angles[i]))
+        return x,y
+
+# Iniciar nodo
+rospy.init_node('nodo_obstaculo')
+
+# Crear publicador
+topic = 'cmd_vel'
+pub = rospy.Publisher(topic, Twist, queue_size=10)
+
+# Creación de instancia
+ruta = Twist()
 
 # Transformación del sistema del LiDAR al sistema del Robot
 T_BL = Tlidar_wrt_base()
+lidar = Lidar()
 
 # Tiempo de ejecución del bucle (en Hz)
-rate = rospy.Rate(1)
+rate = rospy.Rate(10)
 while not rospy.is_shutdown():
     # Coordenadas en el sistema del LiDAR
     x, y = lidar.get_xy()
@@ -57,7 +114,17 @@ while not rospy.is_shutdown():
     xr = P_robot[0,:]     # x en sistema del robot
     yr = P_robot[1,:]     # y en el sistema del robot
 
+    for i in range(0, len(xr)):
+        distance = (xr[i]**2 + yr[i]**2)**0.5
+        if distance > 0.5: 
+            ruta.linear.x   = 0.2
+            ruta.angular.z  = 0.0
+        else:
+            ruta.linear.x   = 0.0
+            ruta.angular.z  = 0.0
 
+    # Esperar
+    pub.publish(ruta)
 
     # Esperar
     rate.sleep()

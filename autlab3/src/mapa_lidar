@@ -6,6 +6,7 @@ import rospy
 import numpy as np
 from sensor_msgs.msg import LaserScan
 from autlab3.msg import ArrayXY
+from nav_msgs.msg import Odometry
 import tf
 
 
@@ -15,7 +16,6 @@ def rotFromQuat(q):
     return np.array([[2.*(q[3]**2+q[0]**2)-1., 2.*(q[0]*q[1]-q[3]*q[2]), 2.*(q[0]*q[2]+q[3]*q[1])],
                      [2.*(q[0]*q[1]+q[3]*q[2]), 2.*(q[3]**2+q[1]**2)-1., 2.*(q[1]*q[2]-q[3]*q[0])],
                      [2.*(q[0]*q[2]-q[3]*q[1]), 2.*(q[1]*q[2]+q[3]*q[0]), 2.*(q[3]**2+q[2]**2)-1.]])
-
 
 def lidar_wrt_base():
     """
@@ -34,18 +34,138 @@ def lidar_wrt_base():
 
 
 class Odometria(object):
-    # Completar
+    def __init__(self):
+        # Crear el suscriptor al tópico 'odom'
+        topic = '/odom'
+        self.pub = rospy.Subscriber(topic, Odometry, self.callback)
+        self.odom_msg = Odometry()
+        # Esperar 1 segundo
+        rospy.sleep(1)
 
+    def callback(self, msg):
+        # Callback para el suscriptor
+        self.odom_msg = msg
 
+    def q2tf(self):
+        quat_x = self.odom_msg.pose.pose.orientation.x
+        quat_y = self.odom_msg.pose.pose.orientation.y
+        quat_z = self.odom_msg.pose.pose.orientation.z
+        quat_w = self.odom_msg.pose.pose.orientation.w
 
+        quat = [quat_x, quat_y, quat_z, quat_w]
+        q = rotFromQuat(quat)
 
+        px = self.odom_msg.pose.pose.position.x
+        py = self.odom_msg.pose.pose.position.y
+        pz = self.odom_msg.pose.pose.position.z
 
-    
+        p = [px, py, pz]
+
+        mh = np.array([[q[0][0],    q[1][0],    q[2][0], p[0]],
+                       [q[0][1],    q[1][1],    q[2][1], p[1]],
+                       [q[0][2],    q[1][2],    q[2][2], p[2]],
+                       [      0,          0,          0,    1]])
+
+        #print(mh)
+        return mh
+
 
 class Lidar(object):
-    # Similar a lo desarrollado anteriormente
+    def __init__(self):
+        # Crear el suscriptor al tópico del LiDAR
+        topic = '/scan'
+        self.pub = rospy.Subscriber(topic, LaserScan, self.callback)
+        self.datos = LaserScan()
+        # Esperar 1 segundo
+        rospy.sleep(1)
+        
+        self.angles = np.arange(self.datos.angle_min, self.datos.angle_max + self.datos.angle_increment, self.datos.angle_increment)
+
+        # Almacenar los rangos máximo y mínimo que puede leer el LiDAR
+        self.range_max = self.datos.range_max
+        self.range_min = self.datos.range_min
+        
+    def callback(self, msg):
+        # Callback para el suscriptor
+        self.datos = msg
+        
+    def get_xy(self):
+        """ Retorna los valores x,y de la medición, en el sistema del LiDAR
+        """
+        # Obtener los rangos medidos
+        data = self.datos.ranges
+
+        # Rango de valores de los ángulos, angle_min a angle_max, 
+        # distancia entre cada punto proporcional a la cantidad de datos
+        angle_min = self.datos.angle_min
+        angle_max = self.datos.angle_max
+        x = []
+        y = []
+
+        # Filtrar los rangos que no son válidos: mantener solo los rangos
+        # válidos y sus correspondientes ángulos
+        
+        # angles = np.linspace(angle_min, angle_max, len(data))
+        # Convertir los rangos válidos en x, y
+
+        #print("--------- data --------", data)
+        #print("--------- angles --------", angles)
+
+        for i in range(0, len(data)):
+            if data[i] < self.range_max and data[i] > self.range_min:
+                angle = self.angles[i]
+                x.append(data[i]*np.cos(angle))
+                y.append(data[i]*np.sin(angle))
+                #print("x: ",x, "-----------------y: ",y, "\n")
+
+        return x,y
+
+# Inicializar el nodo
+rospy.init_node('nodo_lidar_odom')
+
+# Objeto que lee el escaneo
+lidar = Lidar()
+# Objeto que lee la odometria
+odom_msg = Odometria()
 
 
+# Declarar del publicador
+topic = 'lidar_xy'
+pub = rospy.Publisher(topic, ArrayXY, queue_size=10)
+# Creación de una instancia (vacía) del mensaje
+lidar_xy_msg = ArrayXY()
 
+# Transformación del sistema del LiDAR al sistema del Robot
+T_BL = lidar_wrt_base()
+
+# Tiempo de ejecución del bucle (en Hz)
+rate = rospy.Rate(1)
+while not rospy.is_shutdown():
+
+    # Obtención de la matriz de transformación
+    T_O = odom_msg.q2tf()
+
+    # Coordenadas en el sistema del LiDAR
+    x, y = lidar.get_xy()
+
+    # Conversión a coordenadas homogéneas
+    P = np.ones((4, len(x)))
+    P[0,:] = x
+    P[1,:] = y
+    P[2,:] = np.zeros((1,len(x)))   # El LiDAR mide z=0 en su propio sistema
+                
+    # Conversión de las coordenadas del sistema del LiDAR al sistema odom
+    P_robot = (T_O.dot(T_BL)).dot(P)
+    xr = P_robot[0,:]     # x en sistema odom
+    yr = P_robot[1,:]     # y en el sistema odom
+
+    lidar_xy_msg.x = xr
+    lidar_xy_msg.y = yr
+    #print('x ', x)
+    #print('y ', y)
+    pub.publish(lidar_xy_msg)
+
+    # Esperar
+    rate.sleep()
 
     

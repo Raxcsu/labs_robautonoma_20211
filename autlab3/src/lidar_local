@@ -4,48 +4,59 @@
 from __future__ import print_function
 import rospy
 import numpy as np
+from sensor_msgs.msg import LaserScan
+from autlab3.msg import ArrayXY
 
+cos = np.cos 
+sin = np.sin
 
 class Lidar(object):
     def __init__(self):
         # Crear el suscriptor al tópico del LiDAR
-
-        
+        topic = '/scan'
+        self.pub = rospy.Subscriber(topic, LaserScan, self.callback)
+        self.datos = LaserScan()
         # Esperar 1 segundo
         rospy.sleep(1)
         
-        # Precalcular un vector de numpy que contenga los ángulos para cada
-        # rango. Se puede usar numpy.arange, por ejemplo
-
-        
-
         # Almacenar los rangos máximo y mínimo que puede leer el LiDAR
-
-        
-
+        self.range_max = self.datos.range_max
+        self.range_min = self.datos.range_min
         
     def callback(self, msg):
         # Callback para el suscriptor
-
-
+        self.datos = msg
         
     def get_xy(self):
         """ Retorna los valores x,y de la medición, en el sistema del LiDAR
         """
-        
         # Obtener los rangos medidos
-        
+        data = self.datos.ranges
+
+        # Rango de valores de los ángulos, angle_min a angle_max, 
+        # distancia entre cada punto proporcional a la cantidad de datos
+        angle_min = self.datos.angle_min
+        angle_max = self.datos.angle_max
+        angles = np.linspace(angle_min, angle_max, len(data))
+
+        x = []
+        y = []
+        data_filtered = []
 
         # Filtrar los rangos que no son válidos: mantener solo los rangos
         # válidos y sus correspondientes ángulos
+        
+        for i in range(0, len(data)):
+            if data[i] < self.range_max or data[i] > self.range_min:
+                data_filtered.append(data[i])
 
-
-
+        angles = np.linspace(angle_min, angle_max, len(data_filtered))
         # Convertir los rangos válidos en x, y
-
-
+       
+        for i in range(0, len(data_filtered)): 
+            x.append(data_filtered[i]*np.cos(angles[i])) 
+            y.append(data_filtered[i]*np.sin(angles[i]))
         return x,y
-
 
 
 # Inicializar el nodo
@@ -54,13 +65,23 @@ rospy.init_node('nodo_leer_lidar')
 # Objeto que lee el escaneo
 lidar = Lidar()
 
+# Declarar del publicador
+topic = 'lidar_xy'
+pub = rospy.Publisher(topic, ArrayXY, queue_size=10)
+# Creación de una instancia (vacía) del mensaje
+lidar_xy_msg = ArrayXY()
+
 # Tiempo de ejecución del bucle (en Hz)
 rate = rospy.Rate(1)
 while not rospy.is_shutdown():
     # Lectura de los valores x, y
     # Tanto x como y deben ser arreglos de numpy
     x, y = lidar.get_xy()
-    
+    lidar_xy_msg.x = x
+    lidar_xy_msg.y = y
+    #print('x ', x)
+    #print('y ', y)
+    pub.publish(lidar_xy_msg)
     # Esperar
     rate.sleep()
 
